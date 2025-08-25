@@ -1,6 +1,10 @@
-Hi, I am NSFW - your advanced AI assistant for generating NSFW images.
+Hi, I am NSFW - your advanced AI assistant for generating NSFW images and texts.
 
 Here's what I can do:
+
+**Communication**
+
+"Hi, let's talk about sex"
 
 **Create images**
 
