@@ -6,7 +6,7 @@ export const NODE_ENV = process.env.NODE_ENV || "development";
 export const LLM_API_KEY = process.env.LLM_API_KEY || "sk-proj-unknown";
 export const LLM_BASE_URL =
   process.env.LLM_BASE_URL || "http://localhost:65534";
-export const MODEL = "dphn/Dolphin3.0-Llama3.1-8B";
+export const MODEL = "NousResearch/Hermes-3-Llama-3.1-70B";
 
 export const IMAGE_GENERATION_MODEL_ID= "flux-dev-nsfw"
 export const IMAGE_EDITING_MODEL_ID= "flux-kontext-dev"
