@@ -9,11 +9,10 @@ export const LLM_BASE_URL =
 export const MODEL = "NousResearch/Hermes-3-Llama-3.1-70B";
 
 export const IMAGE_GENERATION_MODEL_ID= "flux-dev-nsfw"
-export const IMAGE_EDITING_MODEL_ID= "flux-kontext-dev"
+export const IMAGE_EDITING_MODEL_ID= "flux-kontext-nsfw"
 export const IMAGE_GENERATION_MODEL_NAME = "flux-dev-nsfw"
-export const IMAGE_EDITING_MODEL_NAME = "flux-kontext-dev-nsfw";
-// export const IMAGE_GENERATION_CRYPTOAGENT_ID = "9444";
-// export const IMAGE_EDITING_CRYPTOAGENT_ID = "9456";
+export const IMAGE_EDITING_MODEL_NAME = "flux-kontext-nsfw";
+
 
 export const MAX_RETRIES = 3;
 export const VISION_MODEL_ID = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8";

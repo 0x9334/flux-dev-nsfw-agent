@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { ChatCompletionChunk } from "openai/resources/chat";
 
 import { PromptPayload } from "./types";
-import { MODEL, LLM_API_KEY, SYSTEM_PROMPT, LLM_BASE_URL, IMAGE_GENERATION_MODEL_ID, VISION_MODEL_ID, IMAGE_GENERATION_MODEL_NAME, IMAGE_EDITING_MODEL_NAME } from "../constants";
+import { MODEL, LLM_API_KEY, SYSTEM_PROMPT, LLM_BASE_URL, IMAGE_GENERATION_MODEL_ID, VISION_MODEL_ID, IMAGE_GENERATION_MODEL_NAME, IMAGE_EDITING_MODEL_NAME, IMAGE_EDITING_MODEL_ID} from "../constants";
 import fs from "fs";
 
 const systemPrompt = SYSTEM_PROMPT;
@@ -20,24 +20,46 @@ const tools: OpenAI.ChatCompletionTool[] = [
     function: {
       name: "generate_image",
       description:
-        "Generate a new image entirely from scratch based on the user's description. \
-Use this tool only if the user explicitly asks you to create, produce, or generate an image. \
-Do not use it when the request is about analyzing or editing an existing image.",
+        "Generate a new image from scratch when the user asks to *generate, create, or produce*. \
+Do not use for editing or analyzing existing images. \
+The prompt should capture all requested details—objects, people, environments, styles, moods, colors, or NSFW content. \
+If unclear, ask the user for clarification before generating.",
       parameters: {
         type: "object",
         properties: {
           prompt: {
             type: "string",
             description:
-              "A vivid, detailed, and well-structured prompt that will be used to generate the new image. \
-The description should capture all key elements the user specifies—objects, people, styles, moods, colors, or settings—so that the output is as close as possible to the user’s request. \
-If the user's request is vague, politely ask for clarification before proceeding.",
+              "A clear, vivid prompt reflecting exactly what the user wants (including NSFW if requested). \
+Expand or refine wording if needed to ensure the image matches the intent.",
           },
         },
         required: ["prompt"],
       },
     },
-  }
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_image",
+      description:
+        "Edit or transform an existing image when the user asks to alter, change, or enhance. \
+Do not use for new generations. \
+Edits may include NSFW content if requested.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description:
+              "A precise description of the edits requested (e.g., change colors, add/remove objects, adjust style, replace elements, transform background, or NSFW edits). \
+Follow instructions exactly, and ask for clarification if ambiguous.",
+          },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
 ];
 
 // Pre-compile expensive regular expressions once so they are reused across requests
@@ -395,6 +417,7 @@ const editImage = async (prompt: string, imageBase64: string, controller: Readab
     const startTime = Date.now();
 
     const requestBody = {
+      model: IMAGE_EDITING_MODEL_ID,
       prompt: prompt.trim(),
       image: imageBase64,
       stream: true
@@ -508,10 +531,10 @@ export const prompt = async (
 ): Promise<string | ReadableStream<Uint8Array>> => {
 
   let lastImageData: string | null = null;
-
-  // // load dummy image for testing from /home/pc/imagine_agent/input.png
-  // const dummyImage = fs.readFileSync('/home/pc/imagine_agent/input.png', { encoding: 'base64' });
+  // load dummy image for testing from /home/pc/imagine_agent/input.png
+  // const dummyImage = fs.readFileSync('/home/pc/flux-dev-nsfw-agent/input.png', { encoding: 'base64' });
   // console.log("dummyImage", dummyImage.length);
+  
 
   if (!payload.messages?.length) {
     throw new Error("No messages provided in payload");
@@ -671,6 +694,50 @@ export const prompt = async (
                     );
                   }
 
+                } catch (parseError) {
+                  console.error("Error parsing tool call arguments:", parseError);
+                  const errorChunk = enqueueMessage(true, `<error>Failed to parse arguments</error>`);
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+                  );
+                }
+              }
+              else if (toolCall?.function?.name === "edit_image") {
+                try {
+                  const { prompt } = JSON.parse(toolCall?.function?.arguments || "{}");
+                  const tool_call_content_action = `<action>Executing <b> ` + (toolCall?.function?.name ?? "edit_image") + ` </b> </action><details><summary>Arguments: ` + (toolCall?.function?.arguments ?? "{}") + `</summary></details>`;
+                  console.log("Tool call content action:", tool_call_content_action);
+                  
+                  // Create chunk for tool execution message
+                  const toolExecutionChunk = enqueueMessage(false, tool_call_content_action);
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify(toolExecutionChunk)}\n\n`)
+                  );
+                  if (!lastImageData) {
+                    const errorChunk = enqueueMessage(true, `Please provide an image to edit. You can do this by uploading an image in the messages.`);
+                    controller.enqueue(
+                      encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+                    );
+                    continue;
+                  }
+                  
+                  // init isSuccess
+                  let isSuccess: boolean | undefined = false;
+
+                  for (let i = 0; i < 3; i++) {
+                    isSuccess = await editImage(prompt, lastImageData, controller);
+                    if (isSuccess) {
+                      console.log("Image editing succeeded");
+                      break;
+                    }
+                    console.log("Image editing failed, retrying...");
+                  }
+                  if (!isSuccess) {
+                    const errorChunk = enqueueMessage(true, `<error>Failed to edit image</error>`);
+                    controller.enqueue(
+                      encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+                    );
+                  }
                 } catch (parseError) {
                   console.error("Error parsing tool call arguments:", parseError);
                   const errorChunk = enqueueMessage(true, `<error>Failed to parse arguments</error>`);
