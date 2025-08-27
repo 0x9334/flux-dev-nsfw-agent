@@ -529,12 +529,13 @@ const enqueueMessage = (
 export const prompt = async (
   payload: PromptPayload
 ): Promise<string | ReadableStream<Uint8Array>> => {
+  console.log("Starting prompt with payload:", payload);
 
   let lastImageData: string | null = null;
-  // load dummy image for testing from /home/pc/imagine_agent/input.png
-  // const dummyImage = fs.readFileSync('/home/pc/flux-dev-nsfw-agent/input.png', { encoding: 'base64' });
+
+  // // load dummy image for testing from /home/pc/imagine_agent/input.png
+  // const dummyImage = fs.readFileSync('/home/pc/imagine_agent/input.png', { encoding: 'base64' });
   // console.log("dummyImage", dummyImage.length);
-  
 
   if (!payload.messages?.length) {
     throw new Error("No messages provided in payload");
@@ -592,11 +593,11 @@ export const prompt = async (
                    // Extract base64 prefix for clean reference
                    const base64Match = url.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]{1,20})/);
                    if (base64Match && base64Match[1]) {
-                     return '';
+                     return `<image: ${base64Match[1]}...>`;
                    }
-                   return '';
+                   return '<image: [base64 data]>';
                  } else {
-                   return '';
+                   return `<image: ${url}>`;
                  }
                }
                return '';
@@ -626,9 +627,9 @@ export const prompt = async (
                   if (base64Match && base64Match[1]) {
                     const base64Data = base64Match[1];
                     const firstChars = base64Data.substring(0, 20);
-                    return '';
+                    return `<image: ${firstChars}...>`;
                   }
-                  return '';
+                  return '<image: [base64 data]>';
                 });
               });
               if (processedContent.length === beforeLength) break; // nothing left to replace
@@ -636,7 +637,7 @@ export const prompt = async (
             // Final cleanup: remove any remaining very long base64-looking strings
             processedContent = processedContent.replace(/[A-Za-z0-9+/=]{200,}/g, (match) => {
               const firstChars = match.substring(0, 20);
-              return '';
+              return `<image: ${firstChars}...>`;
             });
           }
           
@@ -701,8 +702,7 @@ export const prompt = async (
                     encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
                   );
                 }
-              }
-              else if (toolCall?.function?.name === "edit_image") {
+              } else if (toolCall?.function?.name === "edit_image") {
                 try {
                   const { prompt } = JSON.parse(toolCall?.function?.arguments || "{}");
                   const tool_call_content_action = `<action>Executing <b> ` + (toolCall?.function?.name ?? "edit_image") + ` </b> </action><details><summary>Arguments: ` + (toolCall?.function?.arguments ?? "{}") + `</summary></details>`;
@@ -746,6 +746,46 @@ export const prompt = async (
                   );
                 }
               }
+              // else if (toolCall?.function?.name === "read_image") {
+              //   try {
+              //     const { prompt } = JSON.parse(toolCall?.function?.arguments || "{}");
+              //     console.log("Tool call arguments:", toolCall?.function?.arguments);
+              //     const tool_call_content_action = `<action>Executing <b> ` + (toolCall?.function?.name ?? "read_image") + ` </b> </action><details><summary>Arguments: ` + (toolCall?.function?.arguments ?? "{}") + `</summary></details>`;
+              //     console.log("Tool call content action:", tool_call_content_action);
+              //     const toolExecutionChunk = enqueueMessage(false, tool_call_content_action);
+              //     controller.enqueue(
+              //       encoder.encode(`data: ${JSON.stringify(toolExecutionChunk)}\n\n`)
+              //     );
+              //     if (!lastImageData) {
+              //       const errorChunk = enqueueMessage(true, `Please provide an image to read. You can do this by uploading an image in the messages.`);
+              //       controller.enqueue(
+              //         encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+              //       );
+              //     }
+                  
+              //     let isSuccess: boolean | undefined = false;
+              //     for (let i = 0; i < 3; i++) {
+              //       isSuccess = await analyzeImage(prompt, lastImageData, controller);
+              //       if (isSuccess) {
+              //         console.log("Image analysis succeeded");
+              //         break;
+              //       }
+              //       console.log("Image analysis failed, retrying...");
+              //     }
+              //     if (!isSuccess) {
+              //       const errorChunk = enqueueMessage(true, `<error>Failed to analyze image</error>`);
+              //       controller.enqueue(
+              //         encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+              //       );
+              //     }
+              //   } catch (parseError) {
+              //     console.error("Error parsing tool call arguments:", parseError);
+              //     const errorChunk = enqueueMessage(true, `<error>Failed to parse arguments</error>`);
+              //     controller.enqueue(
+              //       encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+              //     );
+              //   }
+              // }
             }
             else {
               controller.enqueue(
