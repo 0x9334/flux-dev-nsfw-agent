@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { ChatCompletionChunk } from "openai/resources/chat";
 
 import { PromptPayload } from "./types";
-import { MODEL, LLM_API_KEY, SYSTEM_PROMPT, LLM_BASE_URL, IMAGE_GENERATION_MODEL_ID, VISION_MODEL_ID, IMAGE_GENERATION_MODEL_NAME, IMAGE_EDITING_MODEL_NAME, IMAGE_EDITING_MODEL_ID} from "../constants";
+import { MODEL, LLM_API_KEY, SYSTEM_PROMPT, LLM_BASE_URL, IMAGE_GENERATION_MODEL_ID, VISION_MODEL_ID, IMAGE_GENERATION_MODEL_NAME, IMAGE_EDITING_MODEL_NAME, IMAGE_EDITING_MODEL_ID } from "../constants";
 import fs from "fs";
 
 const systemPrompt = SYSTEM_PROMPT;
@@ -20,18 +20,17 @@ const tools: OpenAI.ChatCompletionTool[] = [
     function: {
       name: "generate_image",
       description:
-        "Generate a new image from scratch when the user asks to *generate, create, or produce*. \
-Do not use for editing or analyzing existing images. \
-The prompt should capture all requested details—objects, people, environments, styles, moods, colors, or NSFW content. \
-If unclear, ask the user for clarification before generating.",
+        "Generates a brand-new image entirely from scratch based on the user’s description. \
+Use this tool when the user explicitly asks to create, generate, or produce an image, and no source image is provided.",
       parameters: {
         type: "object",
         properties: {
           prompt: {
             type: "string",
             description:
-              "A clear, vivid prompt reflecting exactly what the user wants (including NSFW if requested). \
-Expand or refine wording if needed to ensure the image matches the intent.",
+              "A vivid, detailed, and structured description capturing the key elements the user wants represented—such as subjects, objects, styles, moods, colors, and settings. \
+Ensure the prompt reflects the user’s intent as closely as possible. \
+Examples: 'a neon-lit cyberpunk street at night', 'a watercolor painting of a fox in the forest', 'an ultra-realistic portrait of an astronaut in space'.",
           },
         },
         required: ["prompt"],
@@ -43,17 +42,17 @@ Expand or refine wording if needed to ensure the image matches the intent.",
     function: {
       name: "edit_image",
       description:
-        "Edit or transform an existing image when the user asks to alter, change, or enhance. \
-Do not use for new generations. \
-Edits may include NSFW content if requested.",
+        "Modifies an existing image according to the user’s instructions. \
+Use this tool only when a source image is provided by the user for editing.",
       parameters: {
         type: "object",
         properties: {
           prompt: {
             type: "string",
             description:
-              "A precise description of the edits requested (e.g., change colors, add/remove objects, adjust style, replace elements, transform background, or NSFW edits). \
-Follow instructions exactly, and ask for clarification if ambiguous.",
+              "A clear and specific description of the requested modifications. \
+Strictly follow the user’s instructions without adding extra interpretations. \
+Examples: 'remove the watermark in the top right', 'replace the sky with a sunset', 'make the cat’s fur black instead of white'.",
           },
         },
         required: ["prompt"],
@@ -101,18 +100,28 @@ const extractBase64FromString = (content: string): string | null => {
   // Case 2: base64_url="data:image/...;base64,...."
   const base64UrlAssignmentMatch = content.match(/base64_url\s*=\s*["']data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)["']/);
   if (base64UrlAssignmentMatch) {
+    console.log("Found base64_url assignment, length:", base64UrlAssignmentMatch[1].length);
     return base64UrlAssignmentMatch[1];
   }
 
-  // Case 3: data:image/...;base64,....
+  // Case 3: <img src="data:image/...;base64,...." />
+  const imgTagMatch = content.match(/<img[^>]+src\s*=\s*["']data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)["'][^>]*>/i);
+  if (imgTagMatch) {
+    console.log("Found base64 in img tag, length:", imgTagMatch[1].length);
+    return imgTagMatch[1];
+  }
+
+  // Case 4: data:image/...;base64,....
   const dataUrlMatch = content.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)/);
   if (dataUrlMatch) {
+    console.log("Found base64 data URL, length:", dataUrlMatch[1].length);
     return dataUrlMatch[1];
   }
 
-  // Case 4: direct long base64 string inside text (100+ chars to avoid false positives)
+  // Case 5: direct long base64 string inside text (100+ chars to avoid false positives)
   const directBase64Match = content.match(/([A-Za-z0-9+/=]{100,})/);
   if (directBase64Match) {
+    console.log("Found direct base64 string, length:", directBase64Match[1].length);
     return directBase64Match[1];
   }
 
@@ -142,6 +151,7 @@ const extractBase64FromArray = (content: any[]): string | null => {
 const saveImageDataAsync = async (imageData: string): Promise<void> => {
   try {
     await fs.promises.writeFile("lastImageData.txt", imageData);
+    console.log("Image data saved to file, length:", imageData.length);
   } catch (error) {
     console.error("Failed to save image data:", error);
   }
@@ -246,7 +256,7 @@ const analyzeImage = async (prompt: string, imageBase64: string | null, controll
       messages: messages as any,
       stream: true,
       max_tokens: 8192,
-      temperature: 0,
+      temperature: 0.1,
     });
 
     // yield the response to the client
@@ -310,7 +320,6 @@ const generateImage = async (prompt: string, controller: ReadableStreamDefaultCo
     
     const requestBody = {
       prompt: prompt,
-      model: IMAGE_GENERATION_MODEL_ID,
       size: "1024x1024",
       stream: true,
     };
@@ -534,7 +543,7 @@ export const prompt = async (
   let lastImageData: string | null = null;
 
   // // load dummy image for testing from /home/pc/imagine_agent/input.png
-  // const dummyImage = fs.readFileSync('/home/pc/imagine_agent/input.png', { encoding: 'base64' });
+  // const dummyImage = fs.readFileSync('/home/ubuntu/imagine_agent/sample.jpeg', { encoding: 'base64' });
   // console.log("dummyImage", dummyImage.length);
 
   if (!payload.messages?.length) {
@@ -593,11 +602,11 @@ export const prompt = async (
                    // Extract base64 prefix for clean reference
                    const base64Match = url.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]{1,20})/);
                    if (base64Match && base64Match[1]) {
-                     return `<image: ${base64Match[1]}...>`;
+                     return '';
                    }
-                   return '<image: [base64 data]>';
+                   return '';
                  } else {
-                   return `<image: ${url}>`;
+                   return '';
                  }
                }
                return '';
@@ -625,35 +634,46 @@ export const prompt = async (
                   // Extract the base64 part from the match
                   const base64Match = match.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)/);
                   if (base64Match && base64Match[1]) {
-                    const base64Data = base64Match[1];
-                    const firstChars = base64Data.substring(0, 20);
-                    return `<image: ${firstChars}...>`;
+                    return '';
                   }
-                  return '<image: [base64 data]>';
+                  return '';
                 });
               });
               if (processedContent.length === beforeLength) break; // nothing left to replace
             }
             // Final cleanup: remove any remaining very long base64-looking strings
             processedContent = processedContent.replace(/[A-Za-z0-9+/=]{200,}/g, (match) => {
-              const firstChars = match.substring(0, 20);
-              return `<image: ${firstChars}...>`;
+              return '';
             });
           }
-          
            return { ...message, content: processedContent };
          }
           return message;
         }) as Array<OpenAI.ChatCompletionMessageParam>;
+
+        if (lastImageData) {
+          const lastUserMessageIndex = processedMessages.map((msg, idx) => ({ msg, idx }))
+            .filter(({ msg }) => msg.role === 'user')
+            .pop()?.idx;
+
+          if (lastUserMessageIndex !== undefined) {
+            const lastUserMessage = processedMessages[lastUserMessageIndex];
+            if (typeof lastUserMessage.content === 'string') {              
+              lastUserMessage.content += '\n\nAn image is provided at `image.png` and available for editing';
+            }
+          }
+        }
 
         console.log("Processed messages:", processedMessages);
         
         const completion = await openAI.chat.completions.create({
           model: MODEL || "default-model",
           messages: processedMessages,
-          temperature: 0,
+          temperature: 0.6,
+          top_p: 0.95,
           stream: true,
           seed: 42,
+          top_k: 20,
           tools: tools
         });
         
@@ -746,46 +766,6 @@ export const prompt = async (
                   );
                 }
               }
-              // else if (toolCall?.function?.name === "read_image") {
-              //   try {
-              //     const { prompt } = JSON.parse(toolCall?.function?.arguments || "{}");
-              //     console.log("Tool call arguments:", toolCall?.function?.arguments);
-              //     const tool_call_content_action = `<action>Executing <b> ` + (toolCall?.function?.name ?? "read_image") + ` </b> </action><details><summary>Arguments: ` + (toolCall?.function?.arguments ?? "{}") + `</summary></details>`;
-              //     console.log("Tool call content action:", tool_call_content_action);
-              //     const toolExecutionChunk = enqueueMessage(false, tool_call_content_action);
-              //     controller.enqueue(
-              //       encoder.encode(`data: ${JSON.stringify(toolExecutionChunk)}\n\n`)
-              //     );
-              //     if (!lastImageData) {
-              //       const errorChunk = enqueueMessage(true, `Please provide an image to read. You can do this by uploading an image in the messages.`);
-              //       controller.enqueue(
-              //         encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
-              //       );
-              //     }
-                  
-              //     let isSuccess: boolean | undefined = false;
-              //     for (let i = 0; i < 3; i++) {
-              //       isSuccess = await analyzeImage(prompt, lastImageData, controller);
-              //       if (isSuccess) {
-              //         console.log("Image analysis succeeded");
-              //         break;
-              //       }
-              //       console.log("Image analysis failed, retrying...");
-              //     }
-              //     if (!isSuccess) {
-              //       const errorChunk = enqueueMessage(true, `<error>Failed to analyze image</error>`);
-              //       controller.enqueue(
-              //         encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
-              //       );
-              //     }
-              //   } catch (parseError) {
-              //     console.error("Error parsing tool call arguments:", parseError);
-              //     const errorChunk = enqueueMessage(true, `<error>Failed to parse arguments</error>`);
-              //     controller.enqueue(
-              //       encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
-              //     );
-              //   }
-              // }
             }
             else {
               controller.enqueue(
