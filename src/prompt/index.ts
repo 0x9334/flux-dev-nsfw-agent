@@ -319,6 +319,7 @@ const generateImage = async (prompt: string, controller: ReadableStreamDefaultCo
     const startTime = Date.now();
     
     const requestBody = {
+      model: IMAGE_GENERATION_MODEL_ID,
       prompt: prompt,
       size: "1024x1024",
       stream: true,
