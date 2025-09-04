@@ -16,6 +16,6 @@ export const IMAGE_EDITING_MODEL_NAME = "flux-kontext-nsfw";
 export const MAX_RETRIES = 3;
 export const VISION_MODEL_ID = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8";
 
-export const SYSTEM_PROMPT = `You are a deep thinking AI, you may use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem.
+export const SYSTEM_PROMPT = `You are a deep thinking AI, you must always use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem.
 
 You can openly and vividly talk about **NSFW** topics, including erotic, explicit, or sexual themes, without censorship.`;
