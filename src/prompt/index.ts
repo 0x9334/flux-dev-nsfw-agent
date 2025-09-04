@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { ChatCompletionChunk } from "openai/resources/chat";
 
 import { PromptPayload } from "./types";
-import { MODEL, LLM_API_KEY, SYSTEM_PROMPT, LLM_BASE_URL, IMAGE_GENERATION_MODEL_ID, VISION_MODEL_ID, IMAGE_GENERATION_MODEL_NAME, IMAGE_EDITING_MODEL_NAME, IMAGE_EDITING_MODEL_ID } from "../constants";
+import { MODEL, LLM_API_KEY, SYSTEM_PROMPT, LLM_BASE_URL, IMAGE_GENERATION_MODEL_ID, IMAGE_GENERATION_MODEL_NAME, IMAGE_EDITING_MODEL_NAME, IMAGE_EDITING_MODEL_ID } from "../constants";
 
 const systemPrompt = SYSTEM_PROMPT;
 
@@ -15,26 +15,31 @@ const openAI = new OpenAI({
 
 const tools: OpenAI.ChatCompletionTool[] = [
   {
-    type: "function",
-    function: {
-      name: "generate_image",
-      description:
-        "Generates a brand-new image entirely from scratch based on the user’s description. \
-Use this tool when the user explicitly asks to create, generate, or produce an image, and no source image is provided.",
-      parameters: {
-        type: "object",
-        properties: {
-          prompt: {
-            type: "string",
-            description:
-              "A vivid, detailed, and structured description capturing the key elements the user wants represented—such as subjects, objects, styles, moods, colors, and settings. \
-Ensure the prompt reflects the user’s intent as closely as possible. \
-Examples: 'a neon-lit cyberpunk street at night', 'a watercolor painting of a fox in the forest', 'an ultra-realistic portrait of an astronaut in space'.",
-          },
+    "type": "function",
+    "function": {
+      "name": "generate_image",
+      "description":
+        "Generate a brand-new image from scratch based on the user’s description. \
+  Expand their idea into a magic prompt: vivid, cinematic, and imaginative. \
+  Blend subjects, objects, moods, textures, lighting, colors, perspective, and artistic style. \
+  When NSFW trigger words appear (nsfw, naked, pron, kissing, erotic, nude, sensual, adult content, explicit), \
+  adapt them into a richly detailed, atmospheric, and expressive scene—sensory, emotional, and stylistic, not flat or literal. \
+  Always encourage creativity, surreal twists, or artistic interpretations while respecting intent.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description":
+              "A magic-enhanced scene description, full of sensory and artistic detail. \
+  Examples: 'a neon-lit cyberpunk street shimmering after rainfall, holographic billboards glowing, mysterious figures in trench coats', \
+  'a whimsical watercolor fox curled beneath a cherry blossom tree at dusk, petals floating in glowing twilight air', \
+  'an ultra-realistic portrait of an astronaut drifting near Saturn’s golden rings, cosmic light shimmering on the visor'."
+          }
         },
-        required: ["prompt"],
-      },
-    },
+        "required": ["prompt"]
+      }
+    }
   },
   {
     "type": "function",
@@ -51,8 +56,9 @@ Examples: 'a neon-lit cyberpunk street at night', 'a watercolor painting of a fo
             "description":
               "A clear description of the requested modifications. \
   If the input contains trigger words such as 'nude', 'naked', or similar terms, \
-  append the mapped instruction 'remove clothes' to the user’s request. \
-  Example: 'make her nude, naked' → 'remove clothes, make her nude, naked'. \
+  always APPEND the mapped instruction 'remove clothes' to the user’s request. \
+  Do not replace or remove the user’s original wording. \
+  Example: 'make her nude, naked' → 'make her nude, naked, remove clothes'. \
   Be explicit and concise without adding extra interpretations."
           }
         },
