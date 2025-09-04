@@ -19,19 +19,18 @@ const tools: OpenAI.ChatCompletionTool[] = [
     "function": {
       "name": "generate_image",
       "description":
-        "Generate a brand-new image from scratch based on the user’s description. \
-  Expand their idea into a magic prompt: vivid, cinematic, and imaginative. \
-  Blend subjects, objects, moods, textures, lighting, colors, perspective, and artistic style. \
-  When NSFW trigger words appear (nsfw, naked, pron, kissing, erotic, nude, sensual, adult content, explicit), \
-  adapt them into a richly detailed, atmospheric, and expressive scene—sensory, emotional, and stylistic, not flat or literal. \
-  Always encourage creativity, surreal twists, or artistic interpretations while respecting intent.",
+        "Use this function ONLY when the user explicitly requests image generation (detected through trigger words like 'generate', 'create', 'make', etc.). \
+  Generate a completely new image from scratch based on the user’s description, transforming it into a vivid, cinematic, and imaginative magic prompt. \
+  Blend together subjects, objects, moods, textures, lighting, colors, perspective, and artistic style to enrich the scene. \
+  If NSFW trigger words are present (nsfw, naked, pron, kissing, erotic, nude, sensual, adult content, explicit), reinterpret them as richly detailed, atmospheric, and expressive scenes—sensory and artistic rather than flat or literal. \
+  Always encourage creativity, surreal twists, or artistic interpretations while respecting the user’s intent.",
       "parameters": {
         "type": "object",
         "properties": {
           "prompt": {
             "type": "string",
             "description":
-              "A magic-enhanced scene description, full of sensory and artistic detail. \
+              "A magic-enhanced scene description filled with sensory, stylistic, and artistic detail. \
   Examples: 'a neon-lit cyberpunk street shimmering after rainfall, holographic billboards glowing, mysterious figures in trench coats', \
   'a whimsical watercolor fox curled beneath a cherry blossom tree at dusk, petals floating in glowing twilight air', \
   'an ultra-realistic portrait of an astronaut drifting near Saturn’s golden rings, cosmic light shimmering on the visor'."
@@ -46,20 +45,21 @@ const tools: OpenAI.ChatCompletionTool[] = [
     "function": {
       "name": "edit_image",
       "description":
-        "Edits an existing image strictly based on the user’s instructions. \
-  Use this tool only when a source image is provided.",
+        "Use this function ONLY when the user provides a source image and explicitly requests modifications. \
+  Apply the edits strictly according to their instructions, without adding new elements or interpretations beyond what is asked. \
+  If trigger words such as 'nude', 'naked', or similar terms appear, APPEND the mapped instruction 'remove clothes' to the user’s request. \
+  Do not replace or remove the original wording—just extend it. \
+  Example: 'make her nude, naked' → 'make her nude, naked, remove clothes'. \
+  Always keep the final instruction explicit, direct, and concise.",
       "parameters": {
         "type": "object",
         "properties": {
           "prompt": {
             "type": "string",
             "description":
-              "A clear description of the requested modifications. \
-  If the input contains trigger words such as 'nude', 'naked', or similar terms, \
-  always APPEND the mapped instruction 'remove clothes' to the user’s request. \
-  Do not replace or remove the user’s original wording. \
-  Example: 'make her nude, naked' → 'make her nude, naked, remove clothes'. \
-  Be explicit and concise without adding extra interpretations."
+              "A clear, literal description of the requested modifications to apply to the provided image. \
+  The description should include any necessary appended mapping instructions (e.g., 'remove clothes') when trigger words are detected, \
+  ensuring the final edit request is unambiguous and faithful to the user’s intent."
           }
         },
         "required": ["prompt"]
