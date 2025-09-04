@@ -3,7 +3,6 @@ import { ChatCompletionChunk } from "openai/resources/chat";
 
 import { PromptPayload } from "./types";
 import { MODEL, LLM_API_KEY, SYSTEM_PROMPT, LLM_BASE_URL, IMAGE_GENERATION_MODEL_ID, VISION_MODEL_ID, IMAGE_GENERATION_MODEL_NAME, IMAGE_EDITING_MODEL_NAME, IMAGE_EDITING_MODEL_ID } from "../constants";
-import fs from "fs";
 
 const systemPrompt = SYSTEM_PROMPT;
 
@@ -38,27 +37,29 @@ Examples: 'a neon-lit cyberpunk street at night', 'a watercolor painting of a fo
     },
   },
   {
-    type: "function",
-    function: {
-      name: "edit_image",
-      description:
-        "Modifies an existing image according to the user’s instructions. \
-Use this tool only when a source image is provided by the user for editing.",
-      parameters: {
-        type: "object",
-        properties: {
-          prompt: {
-            type: "string",
-            description:
-              "A clear and specific description of the requested modifications. \
-Strictly follow the user’s instructions without adding extra interpretations. \
-Examples: 'remove the watermark in the top right', 'replace the sky with a sunset', 'make the cat’s fur black instead of white'.",
-          },
+    "type": "function",
+    "function": {
+      "name": "edit_image",
+      "description":
+        "Edits an existing image strictly based on the user’s instructions. \
+  Use this tool only when a source image is provided.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description":
+              "A clear description of the requested modifications. \
+  If the input contains trigger words such as 'nude', 'naked', or similar terms, \
+  append the mapped instruction 'remove clothes' to the user’s request. \
+  Example: 'make her nude, naked' → 'remove clothes, make her nude, naked'. \
+  Be explicit and concise without adding extra interpretations."
+          }
         },
-        required: ["prompt"],
-      },
-    },
-  },
+        "required": ["prompt"]
+      }
+    }
+  }
 ];
 
 // Pre-compile expensive regular expressions once so they are reused across requests
@@ -148,28 +149,6 @@ const extractBase64FromArray = (content: any[]): string | null => {
   return null;
 };
 
-const saveImageDataAsync = async (imageData: string): Promise<void> => {
-  try {
-    await fs.promises.writeFile("lastImageData.txt", imageData);
-    console.log("Image data saved to file, length:", imageData.length);
-  } catch (error) {
-    console.error("Failed to save image data:", error);
-  }
-};
-
-const loadImageDataAsync = async (): Promise<string | null> => {
-  try {
-    if (fs.existsSync("lastImageData.txt")) {
-      const data = await fs.promises.readFile("lastImageData.txt", "utf8");
-      console.log("Loaded image data from file, length:", data.length);
-      return data;
-    }
-  } catch (error) {
-    console.error("Failed to load image data:", error);
-  }
-  return null;
-};
-
 export const isVisionRequest = (payload: PromptPayload): boolean => {
   // Determines if the request should be treated as an OpenAI "vision" request.
   // A vision request contains at least one content item of type "image_url" in
@@ -212,97 +191,7 @@ export const isVisionRequest = (payload: PromptPayload): boolean => {
   return false;
 };
 
-const analyzeImage = async (prompt: string, imageBase64: string | null, controller: ReadableStreamDefaultController<Uint8Array>) => {
-  // Validate inputs
-  if (!prompt || typeof prompt !== 'string' || !imageBase64 || typeof imageBase64 !== 'string') {
-    const errorChunk = enqueueMessage(true, `<error>Valid base64 image data is required</error>`);
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
-    return false;
-  }
-
-  // Validate base64 format
-  const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-  if (!base64Regex.test(imageBase64)) {
-    const errorChunk = enqueueMessage(true, `<error>Invalid base64 format</error>`);
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
-    return false;
-  }
-
-  const messages = [
-    {
-      "role": "system",
-      "content": "You are a helpful assistant that can analyze images and return a description of the image."
-    },
-    {
-      "role": "user",
-      "content": [
-        {
-          "type": "text",
-          "text": prompt
-        },
-        {
-          "type": "image_url",
-          "image_url": {
-            "url": `data:image/png;base64,${imageBase64}`
-          }
-        }
-      ]
-    }
-  ]
-
-  try {
-    const response = await openAI.chat.completions.create({
-      model: VISION_MODEL_ID,
-      messages: messages as any,
-      stream: true,
-      max_tokens: 8192,
-      temperature: 0.1,
-    });
-
-    // yield the response to the client
-    for await (const chunk of response) {
-      let content = chunk.choices[0].delta.content;
-      if (content) {
-        const contentChunk = enqueueMessage(false, content);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(contentChunk)}\n\n`));
-      }
-    }
-    return true;
-  } catch (error: any) {
-    console.error("Vision API error:", error);
-    
-    // Handle specific error cases
-    if (error.status === 400) {
-      let errorMessage = "Bad request to vision API";
-      
-      if (error.message) {
-        if (error.message.includes("model")) {
-          errorMessage = "Vision model not available or not compatible";
-        } else if (error.message.includes("image")) {
-          errorMessage = "Invalid image format or data";
-        } else if (error.message.includes("base64")) {
-          errorMessage = "Invalid base64 encoding";
-        }
-      }
-      
-      const errorChunk = enqueueMessage(true, `<error>${errorMessage}</error>`);
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
-    } else {
-      const errorChunk = enqueueMessage(true, `<error>Vision API error: ${error.message || 'Unknown error'}</error>`);
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
-    }
-    
-    return false;
-  }
-}
-
 const generateImage = async (prompt: string, controller: ReadableStreamDefaultController<Uint8Array>) => {
-  // Validate inputs
-  if (!prompt || typeof prompt !== 'string') {
-    const errorChunk = enqueueMessage(true, `<error>Valid prompt is required</error>`);
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
-    return false;
-  }
   
   // Truncate prompts to 1000 characters if needed
   prompt = prompt.slice(0, 1000);
@@ -398,19 +287,6 @@ const generateImage = async (prompt: string, controller: ReadableStreamDefaultCo
 
 
 const editImage = async (prompt: string, imageBase64: string, controller: ReadableStreamDefaultController<Uint8Array>) => {
-  // Validate inputs
-  if (!prompt || typeof prompt !== 'string') {
-    const errorChunk = enqueueMessage(true, `<error>Valid prompt is required</error>`);
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
-    return false;
-  }
-  
-  if (!imageBase64 || typeof imageBase64 !== 'string') {
-    const errorChunk = enqueueMessage(true, `<error>Valid base64 image data is required</error>`);
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
-    return false;
-  }
-  
   // Truncate prompts to 1000 characters if needed
   prompt = prompt.slice(0, 1000);
 
@@ -542,10 +418,6 @@ export const prompt = async (
   console.log("Starting prompt with payload:", payload);
 
   let lastImageData: string | null = null;
-
-  // // load dummy image for testing from /home/pc/imagine_agent/input.png
-  // const dummyImage = fs.readFileSync('/home/ubuntu/imagine_agent/sample.jpeg', { encoding: 'base64' });
-  // console.log("dummyImage", dummyImage.length);
 
   if (!payload.messages?.length) {
     throw new Error("No messages provided in payload");
