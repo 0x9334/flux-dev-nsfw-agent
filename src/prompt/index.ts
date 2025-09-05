@@ -231,65 +231,93 @@ const generateImage = async (prompt: string, controller: ReadableStreamDefaultCo
     });
 
     if (!response.ok) {
+      console.error(`🚫 Image generation API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text().catch(() => 'Unknown error');
+      const errorChunk = enqueueMessage(true, `<error>Image generation failed: ${response.status} ${response.statusText}. ${errorText}</error>`);
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
       return false;
     }
 
     if (!response.body) {
+      console.error('🚫 No response body received from image generation API');
+      const errorChunk = enqueueMessage(true, `<error>Image generation failed: No response body received from API</error>`);
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
       return false;
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = '';
-    let imageData = '';
+    let hasReceivedImage = false;
+    let imageBase64Data = '';
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      
-      buffer += decoder.decode(value, { stream: true });      
-      // Process complete lines
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6); // Remove 'data: ' prefix
-          try {
-            const parsedData = JSON.parse(data);
-            
-            // Check if this is the final result with image data
-            if (parsedData.image_base64) {
-              imageData += parsedData.image_base64;
-              if (parsedData.finish_reason === "stop") {
-                const imageResultContent = `<img src="data:image/png;base64,${imageData}" />`;
-                const finalChunk = enqueueMessage(true, imageResultContent);
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalChunk)}\n\n`));
-                return true;
-              }
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });      
+        // Process complete lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6); // Remove 'data: ' prefix          
+            // Handle the [DONE] message that signals end of stream
+            if (data.trim() === '[DONE]') {
+              console.log('📡 Received [DONE] signal, ending stream');
+              break;
             }
-            // Check if this is a progress/status update
-            else if (parsedData.finish_reason === "error") {
+            
+            try {
+              const parsedData = JSON.parse(data);
+              
+              // Check if this is the final result with image data
+              if (parsedData.image_base64) {
+                imageBase64Data += parsedData.image_base64;
+                if (parsedData.finish_reason === "stop") {
+                  imageBase64Data = "<img src=\"data:image/png;base64," + imageBase64Data + "\" />";
+                  const chunkImageData = enqueueMessage(false, imageBase64Data);
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunkImageData)}\n\n`));
+                  hasReceivedImage = true;
+                }
+              }
+              // Check if this is a progress/status update
+              else if (parsedData.finish_reason === "error") {
+                console.error('🚫 Image generation failed with error finish_reason');
+                const errorMsg = parsedData.error || 'Unknown error during image generation';
+                const errorChunk = enqueueMessage(true, `<error>Image generation failed: ${errorMsg}</error>`);
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
+                return false;
+              }
+            } catch (parseError) {
+              console.error('🚫 Error parsing streaming data:', parseError);
+              const errorChunk = enqueueMessage(true, `<error>Image generation failed: Error parsing response data</error>`);
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
               return false;
             }
-          } catch (parseError) {
-            console.error('Error parsing streaming data:', parseError);
-            return false;
           }
         }
       }
+    } finally {
+      reader.releaseLock();
     }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`📡 Streaming completed after ${duration}s`);
     
-    return true;
+    return hasReceivedImage;
 
   } catch (error: unknown) {
     console.error(`💥 Unexpected error during image generation:`, error);
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    const errorChunk = enqueueMessage(true, `<error>Image generation failed: ${errorMsg}</error>`);
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
     return false;
   }
 };
+
 
 
 const editImage = async (prompt: string, imageBase64: string, controller: ReadableStreamDefaultController<Uint8Array>) => {
@@ -326,72 +354,90 @@ const editImage = async (prompt: string, imageBase64: string, controller: Readab
     });
     
     if (!response.ok) {
+      console.error(`🚫 Image editing API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text().catch(() => 'Unknown error');
+      const errorChunk = enqueueMessage(true, `<error>Image editing failed: ${response.status} ${response.statusText}. ${errorText}</error>`);
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
       return false;
     }
 
     if (!response.body) {
+      console.error('🚫 No response body received from image editing API');
+      const errorChunk = enqueueMessage(true, `<error>Image editing failed: No response body received from API</error>`);
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
       return false;
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = '';
-    let imageData = '';
+    // let firstChunk = true;
+    let hasReceivedImage = false;
+    let imageBase64Data = '';
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      
-      buffer += decoder.decode(value, { stream: true });
-      
-      // Process complete lines
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6); // Remove 'data: ' prefix
-          try {
-            const parsedData = JSON.parse(data);
-            
-            // Check if this is the final result with image data
-            if (parsedData.image_base64) {
-              imageData += parsedData.image_base64;
-              if (parsedData.finish_reason === "stop") {
-                const imageResultContent = `<img src="data:image/png;base64,${imageData}" />`;
-                const finalChunk = enqueueMessage(true, imageResultContent);
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalChunk)}\n\n`));
-                return true;
-              }
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });      
+        // Process complete lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6); // Remove 'data: ' prefix          
+            // Handle the [DONE] message that signals end of stream
+            if (data.trim() === '[DONE]') {
+              console.log('📡 Received [DONE] signal, ending stream');
+              break;
             }
-            // Check if this is a progress/status update
-            else if (parsedData.finish_reason === "error") {
+            
+            try {
+              const parsedData = JSON.parse(data);
+              
+              // Check if this is the final result with image data
+              if (parsedData.image_base64) {
+                imageBase64Data += parsedData.image_base64;
+                if (parsedData.finish_reason === "stop") {
+                  imageBase64Data = "<img src=\"data:image/png;base64," + imageBase64Data + "\" />";
+                  const chunkImageData = enqueueMessage(false, imageBase64Data);
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunkImageData)}\n\n`));
+                  hasReceivedImage = true;
+                }
+              }
+              // Check if this is a progress/status update
+              else if (parsedData.finish_reason === "error") {
+                console.error('🚫 Image editing failed with error finish_reason');
+                const errorMsg = parsedData.error || 'Unknown error during image editing';
+                const errorChunk = enqueueMessage(true, `<error>Image editing failed: ${errorMsg}</error>`);
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
+                return false;
+              }
+            } catch (parseError) {
+              console.error('🚫 Error parsing streaming data:', parseError);
+              const errorChunk = enqueueMessage(true, `<error>Image editing failed: Error parsing response data</error>`);
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
               return false;
             }
-
-          } catch (parseError) {
-            console.error('Error parsing streaming data:', parseError);
-            return false;
           }
         }
       }
+    } finally {
+      reader.releaseLock();
     }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`📡 Streaming completed after ${duration}s`);
     
-    // If we haven't sent final image yet and have image data, send it now
-    if (imageData) {
-      const imageResultContent = `<img src="data:image/png;base64,${imageData}" />`;
-      const finalChunk = enqueueMessage(true, imageResultContent);
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalChunk)}\n\n`));
-      return true;
-    }
-    
-    return true;
+    return hasReceivedImage;
 
   } catch (error: unknown) {
     console.error(`💥 Unexpected error during image editing:`, error);
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    const errorChunk = enqueueMessage(true, `<error>Image editing failed: ${errorMsg}</error>`);
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
     return false;
   }
 };
@@ -447,7 +493,6 @@ export const prompt = async (
           const message = messages[i];
           if (!message.content) continue;
           if (typeof message.content === 'string') {
-            console.log("message.content", message.content);
             lastImageData = extractBase64FromString(message.content);
             if (lastImageData) {
               break;
@@ -530,17 +575,23 @@ export const prompt = async (
           return message;
         }) as Array<OpenAI.ChatCompletionMessageParam>;
 
-        if (lastImageData) {
-          const lastUserMessageIndex = processedMessages.map((msg, idx) => ({ msg, idx }))
+        // get the last user message
+        const lastUserMessageIndex = processedMessages.map((msg, idx) => ({ msg, idx }))
             .filter(({ msg }) => msg.role === 'user')
             .pop()?.idx;
-
-          if (lastUserMessageIndex !== undefined) {
-            const lastUserMessage = processedMessages[lastUserMessageIndex];
-            if (typeof lastUserMessage.content === 'string') {              
-              lastUserMessage.content += '\n\nAn image is provided at `image.png` and available for editing';
+        if (lastUserMessageIndex !== undefined) {
+          const lastUserMessage = processedMessages[lastUserMessageIndex];
+          if (lastImageData) {
+            if (lastUserMessage) {
+              if (typeof lastUserMessage.content === 'string') {              
+                lastUserMessage.content += '\n\nAn image is provided at `image.png` and available for editing.';
+              }
             }
           }
+          lastUserMessage.content += "\n\nYou must use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem."
+        }
+        else {
+          throw new Error("No user message found in processed messages");
         }
 
         console.log("Processed messages:", processedMessages);
@@ -552,24 +603,21 @@ export const prompt = async (
           top_p: 0.95,
           stream: true,
           seed: 42,
-          top_k: 20,
           tools: tools
         });
         
         for await (const chunk of completion) {
-          if (chunk) {
+          if (chunk) {            
             const toolCallDelta = (chunk as ChatCompletionChunk).choices[0].delta.tool_calls;
             // const content = (chunk as ChatCompletionChunk).choices[0].delta.content;
 
             // Safeguard against undefined values that can occur in intermediate streaming chunks
             if (toolCallDelta && toolCallDelta.length > 0) {
               const toolCall = toolCallDelta[0];
-              console.log("Tool call:", toolCall);
               if (toolCall?.function?.name === "generate_image") {
                 try {
                   const { prompt } = JSON.parse(toolCall?.function?.arguments || "{}");
                   const tool_call_content_action = `<action>Executing <b> ` + (toolCall?.function?.name ?? "generate_image") + ` </b> </action><details><summary>Arguments: ` + (toolCall?.function?.arguments ?? "{}") + `</summary></details>`;
-                  console.log("Tool call content action:", tool_call_content_action);
                   // Create chunk for tool execution message
                   const toolExecutionChunk = enqueueMessage(false, tool_call_content_action);
                   controller.enqueue(
@@ -579,14 +627,8 @@ export const prompt = async (
                   // init isSuccess
                   let isSuccess: boolean | undefined = false;
 
-                  for (let i = 0; i < 3; i++) {
-                    isSuccess = await generateImage(prompt, controller);
-                    if (isSuccess) {
-                      console.log("Image generation succeeded");
-                      break;
-                    }
-                    console.log("Image generation failed, retrying...");
-                  }
+                  isSuccess = await generateImage(prompt, controller);
+                  
                   if (!isSuccess) {
                     const errorChunk = enqueueMessage(true, `<error>Failed to generate image</error>`);
                     controller.enqueue(
@@ -623,14 +665,8 @@ export const prompt = async (
                   // init isSuccess
                   let isSuccess: boolean | undefined = false;
 
-                  for (let i = 0; i < 3; i++) {
-                    isSuccess = await editImage(prompt, lastImageData, controller);
-                    if (isSuccess) {
-                      console.log("Image editing succeeded");
-                      break;
-                    }
-                    console.log("Image editing failed, retrying...");
-                  }
+                  isSuccess = await editImage(prompt, lastImageData, controller);
+
                   if (!isSuccess) {
                     const errorChunk = enqueueMessage(true, `<error>Failed to edit image</error>`);
                     controller.enqueue(
