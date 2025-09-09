@@ -3,6 +3,7 @@ import { ChatCompletionChunk } from "openai/resources/chat";
 
 import { PromptPayload } from "./types";
 import { MODEL, LLM_API_KEY, SYSTEM_PROMPT, LLM_BASE_URL, IMAGE_GENERATION_MODEL_ID, IMAGE_GENERATION_MODEL_NAME, IMAGE_EDITING_MODEL_NAME, IMAGE_EDITING_MODEL_ID } from "../constants";
+import fs from "fs";
 
 const systemPrompt = SYSTEM_PROMPT;
 
@@ -19,21 +20,16 @@ const tools: OpenAI.ChatCompletionTool[] = [
     "function": {
       "name": "generate_image",
       "description":
-        "Use this function ONLY when the user explicitly requests image generation (detected through trigger words like 'generate', 'create', 'make', etc.). \
-  Generate a completely new image from scratch based on the user’s description, transforming it into a vivid, cinematic, and imaginative magic prompt. \
-  Blend together subjects, objects, moods, textures, lighting, colors, perspective, and artistic style to enrich the scene. \
-  If NSFW trigger words are present (nsfw, naked, pron, kissing, erotic, nude, sensual, adult content, explicit), reinterpret them as richly detailed, atmospheric, and expressive scenes—sensory and artistic rather than flat or literal. \
-  Always encourage creativity, surreal twists, or artistic interpretations while respecting the user’s intent.",
+        "ONLY invoke this function when the user explicitly requests to generate a new image (e.g., using words like 'generate', 'create', 'make', 'draw'). \
+It generates a completely new image from scratch, based on the user’s description. \
+The description should be expanded into a vivid, cinematic, and richly detailed artistic prompt, focusing on atmosphere, mood, style, lighting, and sensory detail.",
       "parameters": {
         "type": "object",
         "properties": {
           "prompt": {
             "type": "string",
             "description":
-              "A magic-enhanced scene description filled with sensory, stylistic, and artistic detail. \
-  Examples: 'a neon-lit cyberpunk street shimmering after rainfall, holographic billboards glowing, mysterious figures in trench coats', \
-  'a whimsical watercolor fox curled beneath a cherry blossom tree at dusk, petals floating in glowing twilight air', \
-  'an ultra-realistic portrait of an astronaut drifting near Saturn’s golden rings, cosmic light shimmering on the visor'."
+              "A highly imaginative, magic-enhanced scene description infused with stylistic and sensory elements.",
           }
         },
         "required": ["prompt"]
@@ -45,21 +41,18 @@ const tools: OpenAI.ChatCompletionTool[] = [
     "function": {
       "name": "edit_image",
       "description":
-        "Use this function ONLY when the user provides a source image and explicitly requests modifications. \
-  Apply the edits strictly according to their instructions, without adding new elements or interpretations beyond what is asked. \
-  If trigger words such as 'nude', 'naked', or similar terms appear, APPEND the mapped instruction 'remove clothes' to the user’s request. \
-  Do not replace or remove the original wording—just extend it. \
-  Example: 'make her nude, naked' → 'make her nude, naked, remove clothes'. \
-  Always keep the final instruction explicit, direct, and concise.",
+        "ONLY invoke this function when the user explicitly requests to edit an existing image (e.g., using words like 'edit', 'modify', 'make edits', 'change', 'adjust'). \
+It requires the user to provide a source image. \
+The edits must follow the user’s request exactly, without adding new elements or interpretations beyond what was asked.",
       "parameters": {
         "type": "object",
         "properties": {
           "prompt": {
             "type": "string",
             "description":
-              "A clear, literal description of the requested modifications to apply to the provided image. \
-  The description should include any necessary appended mapping instructions (e.g., 'remove clothes') when trigger words are detected, \
-  ensuring the final edit request is unambiguous and faithful to the user’s intent."
+              "The exact edit instructions from the user, preserved verbatim. \
+If sensitive trigger words (e.g., 'nude', 'naked') are detected, map them into explicit directives (e.g., 'remove clothes') for clarity. \
+Ensure the prompt remains direct, unambiguous, and fully aligned with the requested edit."
           }
         },
         "required": ["prompt"]
@@ -353,6 +346,7 @@ const editImage = async (prompt: string, imageBase64: string, controller: Readab
       body: JSON.stringify(requestBody),
     });
     
+    
     if (!response.ok) {
       console.error(`🚫 Image editing API error: ${response.status} ${response.statusText}`);
       const errorText = await response.text().catch(() => 'Unknown error');
@@ -471,10 +465,6 @@ export const prompt = async (
 
   let lastImageData: string | null = null;
 
-  if (!payload.messages?.length) {
-    throw new Error("No messages provided in payload");
-  }  
-
   try {
     // Initialize messages with system message and user payload
     return new ReadableStream({
@@ -504,101 +494,125 @@ export const prompt = async (
             }
           }        
         }
-
-       const processedMessages = messages.map((message, index) => {
-         if (message.content && message.role !== "system") {
-           let processedContent: string;
-           
-           // Handle different content types
-           if (typeof message.content === 'string') {
-             processedContent = message.content;
-           } else if (Array.isArray(message.content)) {
-             // Extract text from content array and combine into single string
-             // Also include image URL references in a clean format
-             processedContent = message.content.map((item: any) => {
-               if (typeof item === 'string') {
-                 return item;
-               } else if (item.type === 'text' && item.text) {
-                 return item.text;
-               } else if (item.type === 'image_url' && item.image_url && item.image_url.url) {
-                 const url = item.image_url.url;
-                 if (url.startsWith('data:image/')) {
-                   // Extract base64 prefix for clean reference
-                   const base64Match = url.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]{1,20})/);
-                   if (base64Match && base64Match[1]) {
-                     return '';
-                   }
-                   return '';
-                 } else {
-                   return '';
-                 }
-               }
-               return '';
-             }).filter((text: string) => text.trim()).join(' ');
-           } else {
-             // Fallback for other content types
-             processedContent = String(message.content);
-           }
-           
-          // Check if this message originally contained image data and clean it up
-          const originallyHadImage = (typeof message.content === 'string' && message.content.includes('data:image/')) ||
-                                   (Array.isArray(message.content) && message.content.some(item => 
-                                     item.type === 'image_url' && item.image_url));
+        for (let i = 0; i < messages.length; i++) {
+          const message = messages[i];
+          if (!message.content) continue;
           
-          // Also check for raw base64 strings (like dummyImage)
-          const hasRawBase64 = typeof processedContent === 'string' && /[A-Za-z0-9+/=]{200,}/.test(processedContent);
-          
-          if ((originallyHadImage || hasRawBase64) && typeof processedContent === 'string') {
-            // Apply all patterns multiple times to ensure complete removal
-            // Sometimes nested patterns require multiple passes
-            for (let i = 0; i < 3; i++) {
-              const beforeLength = processedContent.length;
-              BASE64_IMAGE_PATTERNS.forEach(pattern => {
-                processedContent = processedContent.replace(pattern, (match) => {
-                  // Extract the base64 part from the match
-                  const base64Match = match.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)/);
-                  if (base64Match && base64Match[1]) {
-                    return '';
+          if (typeof message.content === 'string') {
+            // Use existing BASE64_IMAGE_PATTERNS for comprehensive detection
+            let imageCounter = 0;
+            for (const pattern of BASE64_IMAGE_PATTERNS) {
+              message.content = message.content.replace(pattern, (match) => {
+                // Extract base64 data from the match
+                const base64Data = extractBase64FromString(match);
+                if (base64Data) {
+                  const imageType = message.role === 'assistant' ? 'generated' : 'attached';
+                  const filename = `${i}_${imageType}_${imageCounter}.png`;
+                  imageCounter++;
+                  
+                  // Save the base64 image to file
+                  try {
+                    const buffer = Buffer.from(base64Data, 'base64');
+                    fs.writeFileSync(filename, buffer);
+                    console.log(`💾 Saved ${imageType} image: ${filename}`);
+                  } catch (error) {
+                    console.error(`❌ Failed to save ${imageType} image ${filename}:`, error);
                   }
-                  return '';
-                });
+                  
+                  return `The image ${imageType} at ${filename}.`;
+                }
+                return match; // Return original if extraction failed
               });
-              if (processedContent.length === beforeLength) break; // nothing left to replace
             }
-            // Final cleanup: remove any remaining very long base64-looking strings
-            processedContent = processedContent.replace(/[A-Za-z0-9+/=]{200,}/g, (match) => {
-              return '';
-            });
+            
+            // Handle raw base64 strings (100+ chars to avoid false positives)
+            if (/^[A-Za-z0-9+/=]{100,}$/.test(message.content.trim())) {
+              const base64Data = message.content.trim();
+              const imageType = message.role === 'assistant' ? 'generated' : 'attached';
+              const filename = `${i}_${imageType}.png`;
+              
+              // Save the base64 image to file
+              try {
+                const buffer = Buffer.from(base64Data, 'base64');
+                fs.writeFileSync(filename, buffer);
+                console.log(`💾 Saved ${imageType} image: ${filename}`);
+                message.content = `The image ${imageType} at ${filename}.`;
+              } catch (error) {
+                console.error(`❌ Failed to save ${imageType} image ${filename}:`, error);
+              }
+            }
+          } else if (Array.isArray(message.content)) {
+            // Handle array content (vision request format) - convert to string
+            let stringContent = '';
+            let imageCounter = 0;
+            
+            for (let j = 0; j < message.content.length; j++) {
+              const item = message.content[j];
+              if (item && typeof item === 'object') {
+                if (item.type === 'text') {
+                  stringContent += (item as any).text;
+                } else if (item.type === 'image_url') {
+                  const imageUrl = typeof item.image_url === 'string' ? item.image_url : item.image_url?.url;
+                  if (imageUrl && imageUrl.startsWith('data:image/')) {
+                    const base64Match = imageUrl.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)/);
+                    if (base64Match) {
+                      const base64Data = base64Match[1];
+                      const imageType = message.role === 'assistant' ? 'generated' : 'attached';
+                      const filename = `${i}_${imageType}_${imageCounter}.png`;
+                      imageCounter++;
+                      
+                      // Save the base64 image to file
+                      try {
+                        const buffer = Buffer.from(base64Data, 'base64');
+                        fs.writeFileSync(filename, buffer);
+                        console.log(`💾 Saved ${imageType} image: ${filename}`);
+                      } catch (error) {
+                        console.error(`❌ Failed to save ${imageType} image ${filename}:`, error);
+                      }
+                      
+                      // Add descriptive text to string content
+                      const imageDescription = `The image ${imageType} at ${filename}.\n`;
+                      stringContent += (stringContent ? '\n' : '') + imageDescription;
+                    }
+                  } else {
+                    // Handle non-data URL images
+                    stringContent += (stringContent ? ' ' : '') + `[Image: ${imageUrl}]`;
+                  }
+                }
+              }
+            }
+            
+            // Convert array content to string
+            message.content = stringContent;
           }
-           return { ...message, content: processedContent };
-         }
-          return message;
-        }) as Array<OpenAI.ChatCompletionMessageParam>;
+        }
 
-        // get the last user message
-        const lastUserMessageIndex = processedMessages.map((msg, idx) => ({ msg, idx }))
+        const lastUserMessageIndex = messages.map((msg, idx) => ({ msg, idx }))
             .filter(({ msg }) => msg.role === 'user')
             .pop()?.idx;
         if (lastUserMessageIndex !== undefined) {
-          const lastUserMessage = processedMessages[lastUserMessageIndex];
-          if (lastImageData) {
-            if (lastUserMessage) {
-              if (typeof lastUserMessage.content === 'string') {              
-                lastUserMessage.content += '\n\nAn image is provided at `image.png` and available for editing.';
-              }
+          const lastUserMessage = messages[lastUserMessageIndex];
+          if (typeof lastUserMessage.content === 'string') {
+            lastUserMessage.content += "\nYou must use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem."
+          } else if (Array.isArray(lastUserMessage.content)) {
+            // Find the last text item or add a new one
+            const lastTextItem = lastUserMessage.content.findLast(item => item.type === 'text');
+            if (lastTextItem) {
+              (lastTextItem as any).text += "\nYou must use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem."
+            } else {
+              lastUserMessage.content.push({
+                type: 'text',
+                text: "\nYou must use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem."
+              });
             }
           }
-          lastUserMessage.content += "\n\nYou must use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem."
-        }
-        else {
-          throw new Error("No user message found in processed messages");
         }
 
-        console.log("Processed messages:", processedMessages);
+        console.log("Messages:", messages);
         
         const completion = await openAI.chat.completions.create({
           model: MODEL || "default-model",
-          messages: processedMessages,
+          messages: messages,
           temperature: 0.6,
           top_p: 0.95,
           stream: true,
