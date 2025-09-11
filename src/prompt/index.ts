@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { ChatCompletionChunk } from "openai/resources/chat";
 
 import { PromptPayload } from "./types";
-import { MODEL, LLM_API_KEY, SYSTEM_PROMPT, LLM_BASE_URL, IMAGE_GENERATION_MODEL_ID, IMAGE_GENERATION_MODEL_NAME, IMAGE_EDITING_MODEL_NAME, IMAGE_EDITING_MODEL_ID } from "../constants";
+import { MODEL, LLM_API_KEY, SYSTEM_PROMPT, LLM_BASE_URL, IMAGE_GENERATION_MODEL_ID, IMAGE_GENERATION_MODEL_NAME, IMAGE_EDITING_MODEL_NAME, IMAGE_EDITING_MODEL_ID, MAX_RETRIES } from "../constants";
 import fs from "fs";
 
 const systemPrompt = SYSTEM_PROMPT;
@@ -20,16 +20,17 @@ const tools: OpenAI.ChatCompletionTool[] = [
     "function": {
       "name": "generate_image",
       "description":
-        "ONLY invoke this function when the user explicitly requests to generate a new image (e.g., using words like 'generate', 'create', 'make', 'draw'). \
-It generates a completely new image from scratch, based on the user’s description. \
-The description should be expanded into a vivid, cinematic, and richly detailed artistic prompt, focusing on atmosphere, mood, style, lighting, and sensory detail.",
+        "Invoke this tool ONLY when the user explicitly requests the creation of a new image (trigger words: imagine, generate, create, make, draw, render, or synonyms). \
+The request must be transformed into a vivid, cinematic, and richly detailed artistic prompt. Go beyond the subject alone — capture atmosphere, mood, textures, lighting, composition, perspective, and style. \
+The final description should feel immersive and sensory, painting a scene with words while remaining true to the user’s intent.",
       "parameters": {
         "type": "object",
         "properties": {
           "prompt": {
             "type": "string",
             "description":
-              "A highly imaginative, magic-enhanced scene description infused with stylistic and sensory elements.",
+              "A highly imaginative, magic-enhanced scene description. \
+Incorporate stylistic details (art style, medium, genre), sensory qualities (colors, lighting, textures, environment), and mood-setting elements (tone, emotion, ambience) that amplify the user’s vision into an artistic prompt."
           }
         },
         "required": ["prompt"]
@@ -41,18 +42,18 @@ The description should be expanded into a vivid, cinematic, and richly detailed 
     "function": {
       "name": "edit_image",
       "description":
-        "ONLY invoke this function when the user explicitly requests to edit an existing image (e.g., using words like 'edit', 'modify', 'make edits', 'change', 'adjust'). \
-It requires the user to provide a source image. \
-The edits must follow the user’s request exactly, without adding new elements or interpretations beyond what was asked.",
+        "Invoke this tool ONLY when the user explicitly requests modifications to an existing image (trigger words: edit, modify, change, adjust, retouch, or synonyms) AND an image is attached or available from previous output. \
+The role of this tool is corrective and directive — apply the edits exactly as instructed by the user, without inventing, embellishing, or adding unrequested details. \
+Stay precise, faithful, and literal in carrying out the modification.",
       "parameters": {
         "type": "object",
         "properties": {
           "prompt": {
             "type": "string",
             "description":
-              "The exact edit instructions from the user, preserved verbatim. \
-If sensitive trigger words (e.g., 'nude', 'naked') are detected, map them into explicit directives (e.g., 'remove clothes') for clarity. \
-Ensure the prompt remains direct, unambiguous, and fully aligned with the requested edit."
+              "The user’s edit instructions, preserved faithfully and translated into clear directives. \
+If sensitive terms are used (e.g., 'nude', 'naked'), rewrite them into explicit but unambiguous edit commands (e.g., 'remove clothing') while preserving intent. \
+Ensure the instructions remain specific, actionable, and free of additional creativity beyond the user’s request."
           }
         },
         "required": ["prompt"]
@@ -465,6 +466,9 @@ export const prompt = async (
 
   let lastImageData: string | null = null;
 
+  // load dummy image from file
+  // const dummyImage = fs.readFileSync("i2v_input.JPG", 'base64');
+
   try {
     // Initialize messages with system message and user payload
     return new ReadableStream({
@@ -593,116 +597,156 @@ export const prompt = async (
         if (lastUserMessageIndex !== undefined) {
           const lastUserMessage = messages[lastUserMessageIndex];
           if (typeof lastUserMessage.content === 'string') {
-            lastUserMessage.content += "\nYou must use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem."
-          } else if (Array.isArray(lastUserMessage.content)) {
-            // Find the last text item or add a new one
-            const lastTextItem = lastUserMessage.content.findLast(item => item.type === 'text');
-            if (lastTextItem) {
-              (lastTextItem as any).text += "\nYou must use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem."
-            } else {
-              lastUserMessage.content.push({
-                type: 'text',
-                text: "\nYou must use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem."
-              });
-            }
+            lastUserMessage.content = "You must use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem.\n" + lastUserMessage.content;
           }
         }
 
         console.log("Messages:", messages);
         
-        const completion = await openAI.chat.completions.create({
-          model: MODEL || "default-model",
-          messages: messages,
-          temperature: 0.6,
-          top_p: 0.95,
-          stream: true,
-          seed: 42,
-          tools: tools
-        });
+        // Retry the entire completion request if tool call parsing fails
+        let completionRetryCount = 0;
+        let completionSuccessful = false;
         
-        for await (const chunk of completion) {
-          if (chunk) {            
-            const toolCallDelta = (chunk as ChatCompletionChunk).choices[0].delta.tool_calls;
-            // const content = (chunk as ChatCompletionChunk).choices[0].delta.content;
+        while (completionRetryCount < MAX_RETRIES && !completionSuccessful) {
+          try {
+            if (completionRetryCount > 0) {
+              console.log(`🔄 Retrying completion request (attempt ${completionRetryCount + 1}/${MAX_RETRIES})`);
+              const retryChunk = enqueueMessage(false, `<info>Retrying request due to parsing error (attempt ${completionRetryCount + 1}/${MAX_RETRIES})</info>`);
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(retryChunk)}\n\n`)
+              );
+            }
+            
+            const completion = await openAI.chat.completions.create({
+              model: MODEL || "default-model",
+              messages: messages,
+              temperature: 0.6,
+              top_p: 0.95,
+              stream: true,
+              seed: 42,
+              tools: tools
+            });
+            
+            let hasParsingError = false;
+            
+            for await (const chunk of completion) {
+              if (chunk) {            
+                const toolCallDelta = (chunk as ChatCompletionChunk).choices[0].delta.tool_calls;
+                // const content = (chunk as ChatCompletionChunk).choices[0].delta.content;
 
-            // Safeguard against undefined values that can occur in intermediate streaming chunks
-            if (toolCallDelta && toolCallDelta.length > 0) {
-              const toolCall = toolCallDelta[0];
-              if (toolCall?.function?.name === "generate_image") {
-                try {
-                  const { prompt } = JSON.parse(toolCall?.function?.arguments || "{}");
-                  const tool_call_content_action = `<action>Executing <b> ` + (toolCall?.function?.name ?? "generate_image") + ` </b> </action><details><summary>Arguments: ` + (toolCall?.function?.arguments ?? "{}") + `</summary></details>`;
-                  // Create chunk for tool execution message
-                  const toolExecutionChunk = enqueueMessage(false, tool_call_content_action);
-                  controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify(toolExecutionChunk)}\n\n`)
-                  );
-                  
-                  // init isSuccess
-                  let isSuccess: boolean | undefined = false;
+                // Safeguard against undefined values that can occur in intermediate streaming chunks
+                if (toolCallDelta && toolCallDelta.length > 0) {
+                  const toolCall = toolCallDelta[0];
+                  if (toolCall?.function?.name === "generate_image") {
+                    try {
+                      const { prompt } = JSON.parse(toolCall?.function?.arguments || "{}");
+                      const tool_call_content_action = `<action>Executing <b> ` + (toolCall?.function?.name ?? "generate_image") + ` </b> </action><details><summary>Arguments: ` + (toolCall?.function?.arguments ?? "{}") + `</summary></details>`;
+                      // Create chunk for tool execution message
+                      const toolExecutionChunk = enqueueMessage(false, tool_call_content_action);
+                      controller.enqueue(
+                        encoder.encode(`data: ${JSON.stringify(toolExecutionChunk)}\n\n`)
+                      );
+                      
+                      // init isSuccess
+                      let isSuccess: boolean | undefined = false;
 
-                  isSuccess = await generateImage(prompt, controller);
-                  
-                  if (!isSuccess) {
-                    const errorChunk = enqueueMessage(true, `<error>Failed to generate image</error>`);
-                    controller.enqueue(
-                      encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
-                    );
+                      for (let i = 0; i < MAX_RETRIES; i++) {
+                        isSuccess = await generateImage(prompt, controller);
+                        if (isSuccess) {
+                          break;
+                        }
+                      }
+                      
+                      if (!isSuccess) {
+                        const errorChunk = enqueueMessage(true, `<error>Failed to generate image</error>`);
+                        controller.enqueue(
+                          encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+                        );
+                      }
+
+                    } catch (parseError) {
+                      console.error(`Error parsing tool call arguments (attempt ${completionRetryCount + 1}):`, parseError);
+                      hasParsingError = true;
+                      break; // Exit the chunk processing loop to retry the entire completion
+                    }
+                  } else if (toolCall?.function?.name === "edit_image") {
+                    try {
+                      const { prompt } = JSON.parse(toolCall?.function?.arguments || "{}");
+                      const tool_call_content_action = `<action>Executing <b> ` + (toolCall?.function?.name ?? "edit_image") + ` </b> </action><details><summary>Arguments: ` + (toolCall?.function?.arguments ?? "{}") + `</summary></details>`;
+                      console.log("Tool call content action:", tool_call_content_action);
+                      
+                      // Create chunk for tool execution message
+                      const toolExecutionChunk = enqueueMessage(false, tool_call_content_action);
+                      controller.enqueue(
+                        encoder.encode(`data: ${JSON.stringify(toolExecutionChunk)}\n\n`)
+                      );
+                      if (!lastImageData) {
+                        const errorChunk = enqueueMessage(true, `Please provide an image to edit. You can do this by uploading an image in the messages.`);
+                        controller.enqueue(
+                          encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+                        );
+                        continue;
+                      }
+                      
+                      // init isSuccess
+                      let isSuccess: boolean | undefined = false;
+
+                      for (let i = 0; i < MAX_RETRIES; i++) {
+                        isSuccess = await editImage(prompt, lastImageData, controller);
+                        if (isSuccess) {
+                          break;
+                        }
+                      }
+
+                      if (!isSuccess) {
+                        const errorChunk = enqueueMessage(true, `<error>Failed to edit image</error>`);
+                        controller.enqueue(
+                          encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+                        );
+                      }
+                    } catch (parseError) {
+                      console.error(`Error parsing tool call arguments (attempt ${completionRetryCount + 1}):`, parseError);
+                      hasParsingError = true;
+                      break; // Exit the chunk processing loop to retry the entire completion
+                    }
                   }
-
-                } catch (parseError) {
-                  console.error("Error parsing tool call arguments:", parseError);
-                  const errorChunk = enqueueMessage(true, `<error>Failed to parse arguments</error>`);
-                  controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
-                  );
                 }
-              } else if (toolCall?.function?.name === "edit_image") {
-                try {
-                  const { prompt } = JSON.parse(toolCall?.function?.arguments || "{}");
-                  const tool_call_content_action = `<action>Executing <b> ` + (toolCall?.function?.name ?? "edit_image") + ` </b> </action><details><summary>Arguments: ` + (toolCall?.function?.arguments ?? "{}") + `</summary></details>`;
-                  console.log("Tool call content action:", tool_call_content_action);
-                  
-                  // Create chunk for tool execution message
-                  const toolExecutionChunk = enqueueMessage(false, tool_call_content_action);
+                else {
                   controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify(toolExecutionChunk)}\n\n`)
-                  );
-                  if (!lastImageData) {
-                    const errorChunk = enqueueMessage(true, `Please provide an image to edit. You can do this by uploading an image in the messages.`);
-                    controller.enqueue(
-                      encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
-                    );
-                    continue;
-                  }
-                  
-                  // init isSuccess
-                  let isSuccess: boolean | undefined = false;
-
-                  isSuccess = await editImage(prompt, lastImageData, controller);
-
-                  if (!isSuccess) {
-                    const errorChunk = enqueueMessage(true, `<error>Failed to edit image</error>`);
-                    controller.enqueue(
-                      encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
-                    );
-                  }
-                } catch (parseError) {
-                  console.error("Error parsing tool call arguments:", parseError);
-                  const errorChunk = enqueueMessage(true, `<error>Failed to parse arguments</error>`);
-                  controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+                    encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`)
                   );
                 }
               }
             }
-            else {
+            
+            // If we got through all chunks without parsing errors, mark as successful
+            if (!hasParsingError) {
+              completionSuccessful = true;
+            } else {
+              completionRetryCount++;
+            }
+            
+          } catch (completionError) {
+            console.error(`Error in completion request (attempt ${completionRetryCount + 1}):`, completionError);
+            completionRetryCount++;
+            
+            if (completionRetryCount >= MAX_RETRIES) {
+              const errorChunk = enqueueMessage(true, `<error>Failed to complete request after ${MAX_RETRIES} attempts</error>`);
               controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`)
+                encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
               );
             }
           }
         }
+        
+        // If we exhausted all retries due to parsing errors
+        if (!completionSuccessful && completionRetryCount >= MAX_RETRIES) {
+          const errorChunk = enqueueMessage(true, `<error>Failed to parse tool call arguments after ${MAX_RETRIES} attempts</error>`);
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`)
+          );
+        }
+        
         controller.close();
       },
     });
